@@ -8,13 +8,21 @@ from telegram import ForceReply, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 import asyncio
 import threading
+import sys
 
-# Logování
+# Konfigurace logging s flush
 logging.basicConfig(
-    level=logging.INFO,  # Nastavení úrovně logování
-    format='%(asctime)s - %(levelname)s - %(message)s',  # Formát zprávy
-    datefmt='%Y-%m-%d %H:%M:%S'  # Formát času
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
 )
+
+# Pro okamžité zobrazení použijte flush
+print("Starting application", flush=True)
+
 # Set higher logging level for httpx to avoid all GET and POST requests being logged
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -25,8 +33,26 @@ def getDriver(url: str) -> undetected.Chrome:
     """ Inicializace WebDriveru """
     logging.info("Inicializuju web driver")
     driver = Driver(uc=True)
+    
+    # https://stackoverflow.com/a/75110523/19371130
+    driver.options.add_argument("--no-sandbox");
+    driver.options.add_argument("--disable-dev-shm-usage");
+    driver.options.add_argument("--disable-renderer-backgrounding");
+    driver.options.add_argument("--disable-background-timer-throttling");
+    driver.options.add_argument("--disable-backgrounding-occluded-windows");
+    driver.options.add_argument("--disable-client-side-phishing-detection");
+    driver.options.add_argument("--disable-crash-reporter");
+    driver.options.add_argument("--disable-oopr-debug-crash-dump");
+    driver.options.add_argument("--no-crash-upload");
+    driver.options.add_argument("--disable-gpu");
+    driver.options.add_argument("--disable-extensions");
+    driver.options.add_argument("--disable-low-res-tiling");
+    driver.options.add_argument("--log-level=3");
+    driver.options.add_argument("--silent");
+
     driver.uc_open_with_reconnect(url, 10)
     driver.uc_gui_click_captcha()
+    
     return driver
 
 async def send_screenshot_to_user(user_id: int, image_path: str):
@@ -43,6 +69,7 @@ def loginSkins():
     logging.info("Přihlašuji se na https://csgo-skins.com/")
     driver = getDriver("https://csgo-skins.com/")
     driver.find_element(By.TAG_NAME, "html").screenshot("screenshot.png")
+    driver.close()
     
     # Odeslání screenshotu konkrétnímu uživateli
     user_id = int(os.getenv("TELEGRAM_USER_ID"))  # Zadejte ID uživatele, kterému chcete poslat screenshot
@@ -113,8 +140,7 @@ def main():
     
     # Hlavní smyčka programu
     while True:
-        time.sleep(10)
-        logging.info("Program běží...")
+        pass
 
 if __name__ == "__main__":
     main()

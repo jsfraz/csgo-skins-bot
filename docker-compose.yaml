@@ -1,0 +1,9 @@
+services:
+  csgo-skins-bot:
+    build: .
+    container_name: csgo-skins-bot
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - TELEGRAM_USER_ID=${TELEGRAM_USER_ID}
+      - PYTHONUNBUFFERED=1

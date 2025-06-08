@@ -11,10 +11,21 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Vytvoření bota
+## Spuštění
+
+```bash
+sudo docker compose up -d --build
+```
+
+### TODO Proměnné prostředí
+
+- `TELEGRAM_TOKEN` - Token pro přístup k Telegram Bot API
+- `TELEGRAM_USER_ID` - ID uživatele, kterému bude bot posílat zprávy
+
+#### Vytvoření bota
 
 <https://t.me/botfather>
 
-## Získání svého ID
+#### Získání svého ID
 
 <https://t.me/getmyid_bot>
