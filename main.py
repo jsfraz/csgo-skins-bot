@@ -1,14 +1,16 @@
 import os
+import sys
 import time
+import asyncio
 import logging
+import threading
+import queue
+from io import BytesIO
 from seleniumbase import Driver
 from selenium.webdriver.common.by import By
 from seleniumbase import undetected
 from telegram import ForceReply, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-import asyncio
-import threading
-import sys
 
 # Konfigurace logging s flush
 logging.basicConfig(
@@ -31,57 +33,97 @@ logger = logging.getLogger(__name__)
 # WSL2: https://superuser.com/questions/806637/xauth-not-creating-xauthority-file
 def getDriver(url: str) -> undetected.Chrome:
     """ Inicializace WebDriveru """
-    logging.info("Inicializuju web driver")
+    logging.info("Initializing web driver")
     driver = Driver(uc=True)
     
     # https://stackoverflow.com/a/75110523/19371130
-    driver.options.add_argument("--no-sandbox");
-    driver.options.add_argument("--disable-dev-shm-usage");
-    driver.options.add_argument("--disable-renderer-backgrounding");
-    driver.options.add_argument("--disable-background-timer-throttling");
-    driver.options.add_argument("--disable-backgrounding-occluded-windows");
-    driver.options.add_argument("--disable-client-side-phishing-detection");
-    driver.options.add_argument("--disable-crash-reporter");
-    driver.options.add_argument("--disable-oopr-debug-crash-dump");
-    driver.options.add_argument("--no-crash-upload");
-    driver.options.add_argument("--disable-gpu");
-    driver.options.add_argument("--disable-extensions");
-    driver.options.add_argument("--disable-low-res-tiling");
-    driver.options.add_argument("--log-level=3");
-    driver.options.add_argument("--silent");
+    driver.options.add_argument("--no-sandbox")
+    driver.options.add_argument("--disable-dev-shm-usage")
+    driver.options.add_argument("--disable-renderer-backgrounding")
+    driver.options.add_argument("--disable-background-timer-throttling")
+    driver.options.add_argument("--disable-backgrounding-occluded-windows")
+    driver.options.add_argument("--disable-client-side-phishing-detection")
+    driver.options.add_argument("--disable-crash-reporter")
+    driver.options.add_argument("--disable-oopr-debug-crash-dump")
+    driver.options.add_argument("--no-crash-upload")
+    driver.options.add_argument("--disable-gpu")
+    driver.options.add_argument("--disable-extensions")
+    driver.options.add_argument("--disable-low-res-tiling")
+    driver.options.add_argument("--log-level=3")
+    driver.options.add_argument("--silent")
 
     driver.uc_open_with_reconnect(url, 10)
     driver.uc_gui_click_captcha()
     
     return driver
 
-async def send_screenshot_to_user(user_id: int, image_path: str):
+async def send_screenshot_to_user(user_id: int, image: bytes, caption: str):
     """Odešle screenshot konkrétnímu uživateli"""
     try:
-        with open(image_path, 'rb') as photo:
-            await telegram.bot.send_photo(chat_id=user_id, photo=photo)
-        logging.info(f"Screenshot odeslán uživateli {user_id}")
+        # Použití BytesIO pro předání bytes objektu jako souboru
+        photo_stream = BytesIO(image)
+        photo_stream.name = 'screenshot.png'  # Nastavení jména souboru
+        
+        await telegram.bot.send_photo(chat_id=user_id, photo=photo_stream, caption=caption)
+        logging.info(f"Screenshot sent")
     except Exception as e:
-        logging.error(f"Chyba při odesílání screenshotu: {e}")
+        logging.error(f"Error sending screenshot: {e}")
+
+# Globální proměnná pro event loop
+telegram_loop = None
+
+# Globální queue
+screenshot_queue = queue.Queue()
+
+async def process_screenshots():
+    """Zpracování screenshotů z queue"""
+    while True:
+        try:
+            if not screenshot_queue.empty():
+                user_id, image_bytes, caption = screenshot_queue.get()
+                await send_screenshot_to_user(user_id, image_bytes, caption)
+                screenshot_queue.task_done()
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            logging.error(f"Error processing screenshot: {e}")
 
 def loginSkins():
-    """ Přihlášení na csgo-skins.com """
-    logging.info("Přihlašuji se na https://csgo-skins.com/")
+    """Přihlášení na csgo-skins.com """
+    logging.info("Logging in to https://csgo-skins.com/")
     driver = getDriver("https://csgo-skins.com/")
-    driver.find_element(By.TAG_NAME, "html").screenshot("screenshot.png")
-    driver.close()
+
+    # Přihlášení
+    driver.find_element(By.CLASS_NAME, "AppHeader_login-button").click()
+    # Podmínky
+    time.sleep(1)
+    checkboxes = driver.find_elements(By.CLASS_NAME, "CheckboxInput_checkmark")
+    for checkbox in checkboxes:
+            checkbox.click()
+            time.sleep(1)
+    # Přihlášení přes Steam
+    driver.find_element(By.CLASS_NAME, "RulesPopup_button").click()
+    time.sleep(5)
+
+    # Zasílání QR kódu do Telegramu dokud se uživatel nepřihlásí
+    while driver.current_url.startswith("https://steamcommunity.com/openid/loginform/"):
+        # Screenshot Steam QR kódu
+        qrBytes = driver.find_element(By.CSS_SELECTOR, 'div[style*="position: relative"]').screenshot_as_png
+        
+        # Přidání do queue
+        screenshot_queue.put((int(os.getenv("TELEGRAM_USER_ID")), qrBytes, "Steam sign in QR code"))
+        logging.info("Screenshot of QR code added to queue")
+
+        # Obnová QR kódu
+        time.sleep(15)
+        if driver.current_url.startswith("https://steamcommunity.com/openid/loginform/"):
+            logging.info("Refreshing page to get new QR code")
+            driver.refresh()
+        time.sleep(2)
     
-    # Odeslání screenshotu konkrétnímu uživateli
-    user_id = int(os.getenv("TELEGRAM_USER_ID"))  # Zadejte ID uživatele, kterému chcete poslat screenshot
-    
-    # Spuštění v novém vlákně aby neblokoval hlavní program
-    def send_in_thread():
-        try:
-            asyncio.run(send_screenshot_to_user(user_id, "screenshot.png"))
-        except Exception as e:
-            logging.error(f"Chyba při odesílání: {e}")
-    
-    threading.Thread(target=send_in_thread, daemon=True).start()
+    # Přihlašovací tlačítko
+    driver.find_element(By.ID, "imageLogin").click()
+    logging.info("User logged in")
+
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
@@ -110,6 +152,9 @@ async def run_telegram_bot_async():
     telegram.add_handler(CommandHandler("start", start))
     telegram.add_handler(CommandHandler("help", help_command))
     telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+    
+    # Spuštění procesoru screenshotů
+    asyncio.create_task(process_screenshots())
     
     async with telegram:
         await telegram.start()
