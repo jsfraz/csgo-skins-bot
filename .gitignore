@@ -2,3 +2,4 @@
 .env
 *.png
 downloaded_files/
+data/

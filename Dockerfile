@@ -29,8 +29,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Kopírování aplikace
 COPY . .
 
+# Vytvoření adresáře pro Chrome profil
+RUN mkdir -p /app/chrome_profile && chmod 755 /app/chrome_profile
+
 # Nastavení proměnných prostředí
 ENV PYTHONUNBUFFERED=1
+
+# Nastavení volumes pro persistentní data
+VOLUME ["/app/data/chrome_profile", "/app/data/cookies.pkl", "/app/data/localstorage.json"]
 
 # Spuštění aplikace přes xvfb-run
 CMD ["sh", "-c", "xvfb-run -a --server-args='-screen 0 1920x1080x24' python -u main.py 2>&1"]

@@ -1,5 +1,7 @@
 # csgo-skins-bot
 
+## Debugging
+
 ```bash
 wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
 sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
@@ -17,7 +19,7 @@ pip install -r requirements.txt
 sudo docker compose up -d --build
 ```
 
-### TODO Proměnné prostředí
+### Proměnné prostředí
 
 - `TELEGRAM_TOKEN` - Token pro přístup k Telegram Bot API
 - `TELEGRAM_USER_ID` - ID uživatele, kterému bude bot posílat zprávy

@@ -5,12 +5,17 @@ import asyncio
 import logging
 import threading
 import queue
+import json
+import pickle
 from io import BytesIO
 from seleniumbase import Driver
+from seleniumbase import SB
 from selenium.webdriver.common.by import By
 from seleniumbase import undetected
 from telegram import ForceReply, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # Konfigurace logging s flush
 logging.basicConfig(
@@ -31,12 +36,17 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # WSL2: https://superuser.com/questions/806637/xauth-not-creating-xauthority-file
-def getDriver(url: str) -> undetected.Chrome:
-    """ Inicializace WebDriveru """
+def getDriver(url: str, load_session=True) -> undetected.Chrome:
+    """ Inicializace WebDriveru s persistentním úložištěm """
     logging.info("Initializing web driver")
     driver = Driver(uc=True)
     
-    # https://stackoverflow.com/a/75110523/19371130
+    # Nastavení trvalého profilu
+    user_data_dir = os.path.join(os.getcwd(), "data/chrome_profile")
+    os.makedirs(user_data_dir, exist_ok=True)
+    driver.options.add_argument(f"--user-data-dir={user_data_dir}")
+    driver.options.add_argument("--profile-directory=Default")
+    
     driver.options.add_argument("--no-sandbox")
     driver.options.add_argument("--disable-dev-shm-usage")
     driver.options.add_argument("--disable-renderer-backgrounding")
@@ -54,6 +64,12 @@ def getDriver(url: str) -> undetected.Chrome:
 
     driver.uc_open_with_reconnect(url, 10)
     driver.uc_gui_click_captcha()
+    
+    # Načtení uložené session
+    if load_session:
+        load_cookies(driver)
+        load_local_storage(driver)
+        driver.refresh()  # Obnovení stránky pro aplikování cookies
     
     return driver
 
@@ -89,8 +105,9 @@ async def process_screenshots():
 
 def loginSkins():
     """Přihlášení na csgo-skins.com """
-    logging.info("Logging in to https://csgo-skins.com/")
-    driver = getDriver("https://csgo-skins.com/")
+    url = "https://csgo-skins.com/"
+    logging.info("Logging in to %s", url)
+    driver = getDriver(url, load_session=False)
 
     # Přihlášení
     driver.find_element(By.CLASS_NAME, "AppHeader_login-button").click()
@@ -98,8 +115,8 @@ def loginSkins():
     time.sleep(1)
     checkboxes = driver.find_elements(By.CLASS_NAME, "CheckboxInput_checkmark")
     for checkbox in checkboxes:
-            checkbox.click()
-            time.sleep(1)
+        checkbox.click()
+        time.sleep(1)
     # Přihlášení přes Steam
     driver.find_element(By.CLASS_NAME, "RulesPopup_button").click()
     time.sleep(5)
@@ -123,7 +140,47 @@ def loginSkins():
     # Přihlašovací tlačítko
     driver.find_element(By.ID, "imageLogin").click()
     logging.info("User logged in")
+    time.sleep(5)
+    
+    # Po úspěšném přihlášení uložit session
+    save_cookies(driver)
+    save_local_storage(driver)
+    
+    driver.quit()
 
+def openCase(url: str):
+    """Otevření case"""
+    logging.info(f"Opening case at {url.replace('https://csgo-skins.com/case/', '')}")
+
+    with SB(uc=True) as sb:
+        sb.activate_cdp_mode(url)
+        sb.uc_gui_click_captcha()
+        sb.sleep(1)
+
+        # Načtení cookies a local storage
+        load_cookies(sb)
+        load_local_storage(sb)
+        sb.refresh()
+        sb.sleep(2)
+
+        # Kliknutí na tlačítko otevřít
+        sb.find_element(By.CLASS_NAME, "button--open").click()
+        sb.sleep(5)
+
+        # Kliknutí na checkbox pro potvrzení
+        # https://seleniumbase.io/examples/cdp_mode/ReadMe/#cdp-mode-usage
+        sb.cdp.gui_click_element("#Recaptcha div")
+        sb.sleep(5)
+    
+        # Screenshot
+        screenshotBytes = sb.find_element(By.CLASS_NAME, "section_tapes").screenshot_as_png
+        screenshot_queue.put((int(os.getenv("TELEGRAM_USER_ID")), screenshotBytes, f"'{url.replace('https://csgo-skins.com/case/', '')}' opened"))
+        logging.info(f"Screenshot of '{url.replace('https://csgo-skins.com/case/', '')}' opened added to queue")
+
+        # Uložení session před ukončením
+        sb.sleep(3)
+        save_cookies(sb)
+        save_local_storage(sb)
 
 # Define a few command handlers. These usually take the two arguments update and
 # context.
@@ -164,6 +221,81 @@ async def run_telegram_bot_async():
         while True:
             await asyncio.sleep(1)
 
+def save_cookies(driver, filename="data/cookies.pkl"):
+    """Uložení cookies do souboru"""
+    try:
+        cookies = driver.get_cookies()
+        with open(filename, 'wb') as file:
+            pickle.dump(cookies, file)
+        logging.info(f"Cookies uloženy do {filename}")
+    except Exception as e:
+        logging.error(f"Chyba při ukládání cookies: {e}")
+
+def load_cookies(driver, filename="data/cookies.pkl"):
+    """Načtení cookies ze souboru"""
+    try:
+        if os.path.exists(filename):
+            with open(filename, 'rb') as file:
+                cookies = pickle.load(file)
+            for cookie in cookies:
+                driver.add_cookie(cookie)
+            logging.info(f"Cookies načteny z {filename}")
+            return True
+    except Exception as e:
+        logging.error(f"Chyba při načítání cookies: {e}")
+    return False
+
+def save_local_storage(driver, filename="data/localstorage.json"):
+    """Uložení local storage"""
+    try:
+        local_storage = driver.execute_script("return window.localStorage;")
+        with open(filename, 'w') as file:
+            json.dump(local_storage, file)
+        logging.info(f"Local storage uložen do {filename}")
+    except Exception as e:
+        logging.error(f"Chyba při ukládání local storage: {e}")
+
+def load_local_storage(driver, filename="data/localstorage.json"):
+    """Načtení local storage"""
+    try:
+        if os.path.exists(filename):
+            with open(filename, 'r') as file:
+                local_storage = json.load(file)
+            for key, value in local_storage.items():
+                driver.execute_script(f"window.localStorage.setItem('{key}', '{value}');")
+            logging.info(f"Local storage načten z {filename}")
+            return True
+    except Exception as e:
+        logging.error(f"Chyba při načítání local storage: {e}")
+    return False
+
+def is_logged_in():
+    """Kontrola, zda existují cookies a local storage pro přihlášení"""
+    cookies_exist = os.path.exists("data/cookies.pkl")
+    localstorage_exist = os.path.exists("data/localstorage.json")
+    
+    if cookies_exist and localstorage_exist:
+        # Kontrola, zda soubory nejsou prázdné
+        try:
+            with open("data/cookies.pkl", 'rb') as f:
+                cookies = pickle.load(f)
+            with open("data/localstorage.json", 'r') as f:
+                local_storage = json.load(f)
+            
+            # Kontrola, zda obsahují relevantní data
+            has_cookies = len(cookies) > 0
+            has_localstorage = len(local_storage) > 0
+            
+            logging.info(f"Session check - Cookies: {has_cookies}, LocalStorage: {has_localstorage}")
+            return has_cookies and has_localstorage
+            
+        except (pickle.PickleError, json.JSONDecodeError, EOFError) as e:
+            logging.warning(f"Chyba při čtení session souborů: {e}")
+            return False
+    
+    logging.info("Session soubory neexistují")
+    return False
+
 def main():
     """ Hlavní metoda """
     logging.info("Starting")
@@ -180,12 +312,29 @@ def main():
     # Čekání na inicializaci
     time.sleep(2)
 
-    # Přihlášení na csgo-skins.com
-    loginSkins()
+    # Přihlášení na csgo-skins.com pouze pokud nejsou k dispozici cookies a local storage
+    if not is_logged_in():
+        logging.info("Není nalezena platná session, spouštím přihlášení")
+        loginSkins()
+    else:
+        logging.info("Nalezena existující session, přeskakuji přihlášení")
+    
+    # Otevření case
+    openCase("https://csgo-skins.com/case/cs2-case")
     
     # Hlavní smyčka programu
     while True:
-        pass
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
+
+'''
+<span class="Countdown">
+<span class="Countdown_numbers">19</span>
+<span>:</span>
+<span class="Countdown_numbers">46</span>
+<span>:</span>
+<span class="Countdown_numbers">33</span>
+</span>
+'''
