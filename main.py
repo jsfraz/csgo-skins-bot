@@ -1,21 +1,28 @@
 import os
 import sys
 import time
-import asyncio
-import logging
-import threading
 import queue
 import json
 import pickle
+import asyncio
+import logging
+import schedule
+import threading
 from io import BytesIO
-from seleniumbase import Driver
 from seleniumbase import SB
-from selenium.webdriver.common.by import By
+from bs4 import BeautifulSoup
+from seleniumbase import Driver
 from seleniumbase import undetected
 from telegram import ForceReply, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-from selenium.webdriver.support.ui import WebDriverWait
+from datetime import datetime, timedelta
+from selenium.webdriver.common.by import By
+from typing import List, Optional, TypedDict
 from selenium.webdriver.support import expected_conditions as EC
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+
+class CaseOpenTime(TypedDict):
+    url: str
+    end_time: Optional[datetime]
 
 # Konfigurace logging s flush
 logging.basicConfig(
@@ -182,33 +189,15 @@ def openCase(url: str):
         save_cookies(sb)
         save_local_storage(sb)
 
-# Define a few command handlers. These usually take the two arguments update and
-# context.
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Send a message when the command /start is issued."""
-    '''
-    user = update.effective_user
-    await update.message.reply_html(
-        rf"Hi {user.mention_html()}!",
-        reply_markup=ForceReply(selective=True),
-    )
-    '''
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
     await update.message.reply_text("Help!")
-
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Echo the user message."""
-    await update.message.reply_text(update.message.text)
 
 async def run_telegram_bot_async():
     """Asynchronní spuštění Telegram bota"""
     global telegram
     telegram = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
-    telegram.add_handler(CommandHandler("start", start))
     telegram.add_handler(CommandHandler("help", help_command))
-    telegram.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
     
     # Spuštění procesoru screenshotů
     asyncio.create_task(process_screenshots())
@@ -296,8 +285,116 @@ def is_logged_in():
     logging.info("Session soubory neexistují")
     return False
 
+def extract_countdown_time(html_content: str) -> dict:
+    """
+    Extrahuje zbývající čas z HTML countdown elementu
+    """
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        countdown_div = soup.find('span', class_='Countdown')
+        
+        if not countdown_div:
+            logging.warning("Countdown element not found")
+            return None
+            
+        # Najdeme všechny span elementy s čísly
+        number_spans = countdown_div.find_all('span', class_='Countdown_numbers')
+        
+        if len(number_spans) < 3:
+            return None
+            
+        # Extrakce hodnot
+        hours = int(number_spans[0].get_text().strip())
+        minutes = int(number_spans[1].get_text().strip())
+        seconds = int(number_spans[2].get_text().strip())
+        
+        result = {
+            'hours': hours,
+            'minutes': minutes,
+            'seconds': seconds,
+            'total_seconds': hours * 3600 + minutes * 60 + seconds
+        }
+        
+        return result
+        
+    except Exception as e:
+        logging.error(f"Error extracting countdown time: {e}")
+        return None
+
+def extract_countdown_from_element(driver, selector: str = ".Countdown") -> dict:
+    """
+    Extrahuje countdown přímo z webového elementu
+    """
+    try:
+        countdown_element = driver.find_element(By.CSS_SELECTOR, selector)
+        html_content = countdown_element.get_attribute('outerHTML')
+        return extract_countdown_time(html_content)
+        
+    except Exception as e:
+        return None
+
+def format_countdown_time(time_dict: dict) -> datetime:
+    """
+    Vrací datetime kdy skončí countdown (current time + remaining time)
+    """
+    if not time_dict:
+        return None
+        
+    hours = time_dict.get('hours', 0)
+    minutes = time_dict.get('minutes', 0)
+    seconds = time_dict.get('seconds', 0)
+    
+    # Vytvoření timedelta objektu
+    time_remaining = timedelta(hours=hours, minutes=minutes, seconds=seconds)
+    
+    # Přičtení k aktuálnímu času
+    end_time = datetime.now() + time_remaining
+
+    return end_time
+
+def get_case_open_times(urls: List[str]) -> List[CaseOpenTime]:
+    """Zjistí kdy bude možné otevřít další case"""
+    """Zjistí kdy bude možné otevřít další case"""
+    results = []
+    firstUrl = True
+    with SB(uc=True) as sb:
+        for url in urls:
+            # Otevření URL
+            if firstUrl:
+                firstUrl = False
+                sb.activate_cdp_mode(url)
+                sb.uc_gui_click_captcha()
+                sb.sleep(1)
+            else:
+                sb.open(url)
+
+            # Načtení cookies a local storage
+            load_cookies(sb)
+            load_local_storage(sb)
+            sb.refresh()
+            sb.sleep(2)
+
+            # Zjištění času do otevření case
+            countdown_data = extract_countdown_from_element(sb, ".Countdown")
+            
+            if countdown_data:
+                end_time = format_countdown_time(countdown_data)
+                logging.info(f"Case at {url} can be opened at {end_time}")
+                results.append({
+                    'url': url,
+                    'end_time': end_time
+                })
+            else:
+                logging.warning(f"Could not extract countdown for {url}")
+                results.append({
+                    'url': url,
+                    'end_time': None
+                })
+            sb.sleep(1)
+    return results
+
 def main():
-    """ Hlavní metoda """
+    """Hlavní metoda"""
     logging.info("Starting")
 
     # Spuštění Telegram bota v asyncio tasku
@@ -320,21 +417,23 @@ def main():
         logging.info("Nalezena existující session, přeskakuji přihlášení")
     
     # Otevření case
-    openCase("https://csgo-skins.com/case/cs2-case")
-    
+    urls = ["https://csgo-skins.com/case/daily-case", "https://csgo-skins.com/case/cs2-case"]
+    caseTimes = get_case_open_times(urls)
+
+    for case in caseTimes:
+        # Nalezen čas
+        if case['end_time']:
+            schedule.every().day.at(case['end_time'].strftime("%H:%M")).do(openCase, case['url'])
+        else:
+            # Čas nenalezen, otevřít a naplánovat
+            openCase(case['url'])
+            case['end_time'] = datetime.now()
+            schedule.every().day.at(case['end_time'].strftime("%H:%M")).do(openCase, case['url'])
+
     # Hlavní smyčka programu
     while True:
+        schedule.run_pending()
         time.sleep(1)
 
 if __name__ == "__main__":
     main()
-
-'''
-<span class="Countdown">
-<span class="Countdown_numbers">19</span>
-<span>:</span>
-<span class="Countdown_numbers">46</span>
-<span>:</span>
-<span class="Countdown_numbers">33</span>
-</span>
-'''

@@ -1,3 +1,5 @@
 python-telegram-bot
 seleniumbase
 selenium
+beautifulsoup4
+schedule
