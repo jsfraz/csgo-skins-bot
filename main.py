@@ -46,9 +46,6 @@ def getDriver(url: str, load_session=True) -> undetected.Chrome:
     """ Inicializace WebDriveru s persistentním úložištěm """
     logging.info("Initializing web driver")
     driver = Driver(uc=True)
-
-    # Proxy
-    driver.options.add_argument("--proxy-server=socks5://" + os.environ["PROXY_IP_PORT"])
     
     # Nastavení trvalého profilu
     user_data_dir = os.path.join(os.getcwd(), "data/chrome_profile")
@@ -187,7 +184,7 @@ def openCase(url: str):
     """Otevření case"""
     logging.info(f"Opening case at {url.replace('https://csgo-skins.com/case/', '')}")
 
-    with SB(uc=True, proxy="socks5://" + os.environ["PROXY_IP_PORT"]) as sb:
+    with SB(uc=True) as sb:
         sb.activate_cdp_mode(url)
         sb.uc_gui_click_captcha()
         sb.sleep(1)
@@ -386,7 +383,7 @@ def get_case_open_times(urls: List[str]) -> List[CaseOpenTime]:
     """Zjistí kdy bude možné otevřít další case"""
     results = []
     firstUrl = True
-    with SB(uc=True, proxy="socks5://" + os.environ["PROXY_IP_PORT"]) as sb:
+    with SB(uc=True) as sb:
         for url in urls:
             # Otevření URL
             if firstUrl:
