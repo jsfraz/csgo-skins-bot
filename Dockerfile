@@ -36,4 +36,4 @@ RUN mkdir -p /app/data/chrome_profile && chmod 755 /app/data/chrome_profile
 ENV PYTHONUNBUFFERED=1
 
 # Spuštění aplikace přes xvfb-run
-CMD ["sh", "-c", "xvfb-run -a --server-args='-screen 0 1920x1080x24' python -u main.py 2>&1"]
+CMD ["sh", "-c", "xvfb-run -a --server-args='-screen 0 1920x1080x24' python -u main.py"]

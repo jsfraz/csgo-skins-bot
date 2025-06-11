@@ -3,3 +3,4 @@ seleniumbase
 selenium
 beautifulsoup4
 schedule
+dotenv

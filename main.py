@@ -12,6 +12,7 @@ from io import BytesIO
 from telegram import Update
 from seleniumbase import SB
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from seleniumbase import Driver
 from seleniumbase import undetected
 from datetime import datetime, timedelta
@@ -19,9 +20,20 @@ from selenium.webdriver.common.by import By
 from typing import List, Optional, TypedDict
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+# Nastavení okamžitého flush pro stdout a stderr
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 class CaseOpenTime(TypedDict):
     url: str
     end_time: Optional[datetime]
+
+# Načtení .env proměnných
+if os.path.exists('.env'):
+    load_dotenv()
+    logging.info(".env file loaded")
+else:
+    logging.warning(".env file not found, using system environment variables")
 
 # Konfigurace logging s flush
 logging.basicConfig(
@@ -30,8 +42,15 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.StreamHandler(sys.stdout)
-    ]
+    ],
+    force=True
 )
+
+# Nastavte flush pro handler
+for handler in logging.root.handlers:
+    handler.setStream(sys.stdout)
+    if hasattr(handler.stream, 'reconfigure'):
+        handler.stream.reconfigure(line_buffering=True)
 
 # Pro okamžité zobrazení použijte flush
 print("Starting application", flush=True)
@@ -40,44 +59,6 @@ print("Starting application", flush=True)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
-
-# WSL2: https://superuser.com/questions/806637/xauth-not-creating-xauthority-file
-def getDriver(url: str, load_session=True) -> undetected.Chrome:
-    """ Inicializace WebDriveru s persistentním úložištěm """
-    logging.info("Initializing web driver")
-    driver = Driver(uc=True)
-    
-    # Nastavení trvalého profilu
-    user_data_dir = os.path.join(os.getcwd(), "data/chrome_profile")
-    os.makedirs(user_data_dir, exist_ok=True)
-    driver.options.add_argument(f"--user-data-dir={user_data_dir}")
-    driver.options.add_argument("--profile-directory=Default")
-    
-    driver.options.add_argument("--no-sandbox")
-    driver.options.add_argument("--disable-dev-shm-usage")
-    driver.options.add_argument("--disable-renderer-backgrounding")
-    driver.options.add_argument("--disable-background-timer-throttling")
-    driver.options.add_argument("--disable-backgrounding-occluded-windows")
-    driver.options.add_argument("--disable-client-side-phishing-detection")
-    driver.options.add_argument("--disable-crash-reporter")
-    driver.options.add_argument("--disable-oopr-debug-crash-dump")
-    driver.options.add_argument("--no-crash-upload")
-    driver.options.add_argument("--disable-gpu")
-    driver.options.add_argument("--disable-extensions")
-    driver.options.add_argument("--disable-low-res-tiling")
-    driver.options.add_argument("--log-level=3")
-    driver.options.add_argument("--silent")
-
-    driver.uc_open_with_reconnect(url, 10)
-    driver.uc_gui_click_captcha()
-    
-    # Načtení uložené session
-    if load_session:
-        load_cookies(driver)
-        load_local_storage(driver)
-        driver.refresh()  # Obnovení stránky pro aplikování cookies
-    
-    return driver
 
 async def send_screenshot_to_user(user_id: int, image: bytes, caption: str):
     """Odešle screenshot konkrétnímu uživateli"""
@@ -136,83 +117,93 @@ def loginSkins():
     url = "https://csgo-skins.com/"
     logging.info("Logging in to %s", url)
     
-    driver = getDriver(url, load_session=False)
-
-    # Přihlášení
-    driver.find_element(By.CLASS_NAME, "AppHeader_login-button").click()
-    # Podmínky
-    time.sleep(1)
-    checkboxes = driver.find_elements(By.CLASS_NAME, "CheckboxInput_checkmark")
-    for checkbox in checkboxes:
-        checkbox.click()
+    driver = Driver(uc=True, proxy="socks5://192.168.194.254:1080")
+    try:
+        driver.uc_open_with_reconnect(url, 10)
+        driver.uc_gui_click_captcha()
         time.sleep(1)
-    # Přihlášení přes Steam
-    driver.find_element(By.CLASS_NAME, "RulesPopup_button").click()
-    time.sleep(5)
 
-    # Zasílání QR kódu do Telegramu dokud se uživatel nepřihlásí
-    while driver.current_url.startswith("https://steamcommunity.com/openid/loginform/"):
-        # Screenshot Steam QR kódu
-        qrBytes = driver.find_element(By.CSS_SELECTOR, 'div[style*="position: relative"]').screenshot_as_png
-        
-        # Přidání do queue
-        screenshot_queue.put((int(os.getenv("TELEGRAM_USER_ID")), qrBytes, "Steam sign in QR code"))
-        logging.info("Screenshot of QR code added to queue")
+        # Přihlášení
+        driver.find_element(By.CLASS_NAME, "AppHeader_login-button").click()
+        # Podmínky
+        time.sleep(1)
+        checkboxes = driver.find_elements(By.CLASS_NAME, "CheckboxInput_checkmark")
+        for checkbox in checkboxes:
+            checkbox.click()
+            time.sleep(1)
+        # Přihlášení přes Steam
+        driver.find_element(By.CLASS_NAME, "RulesPopup_button").click()
+        time.sleep(5)
 
-        # Obnová QR kódu
-        time.sleep(15)
-        if driver.current_url.startswith("https://steamcommunity.com/openid/loginform/"):
-            logging.info("Refreshing page to get new QR code")
-            driver.refresh()
-        time.sleep(2)
-    
-    # Přihlašovací tlačítko
-    driver.find_element(By.ID, "imageLogin").click()
-    
-    # Odeslání zprávy o úspěšném přihlášení
-    message_queue.put((int(os.getenv("TELEGRAM_USER_ID")), "User logged in successfully"))
-    logging.info("User logged in")
-    time.sleep(5)
-    
-    # Po úspěšném přihlášení uložit session
-    save_cookies(driver)
-    save_local_storage(driver)
-    
-    driver.quit()
+        # Zasílání QR kódu do Telegramu dokud se uživatel nepřihlásí
+        while driver.current_url.startswith("https://steamcommunity.com/openid/loginform/"):
+            # Screenshot Steam QR kódu
+            qrBytes = driver.find_element(By.CSS_SELECTOR, 'div[style*="position: relative"]').screenshot_as_png
+
+            # Přidání do queue
+            screenshot_queue.put((int(os.getenv("TELEGRAM_USER_ID")), qrBytes, "Steam sign in QR code"))
+            logging.info("Screenshot of QR code added to queue")
+
+            # Obnová QR kódu
+            time.sleep(15)
+            if driver.current_url.startswith("https://steamcommunity.com/openid/loginform/"):
+                logging.info("Refreshing page to get new QR code")
+                driver.refresh()
+            time.sleep(2)
+
+        # Přihlašovací tlačítko
+        driver.find_element(By.ID, "imageLogin").click()
+
+        # Odeslání zprávy o úspěšném přihlášení
+        message_queue.put((int(os.getenv("TELEGRAM_USER_ID")), "User logged in successfully"))
+        logging.info("User logged in")
+        time.sleep(5)
+
+        # Po úspěšném přihlášení uložit session
+        save_cookies(driver)
+        save_local_storage(driver)
+    finally:
+        driver.quit()
 
 def openCase(url: str):
     """Otevření case"""
     logging.info(f"Opening case at {url.replace('https://csgo-skins.com/case/', '')}")
 
-    with SB(uc=True) as sb:
-        sb.activate_cdp_mode(url)
-        sb.uc_gui_click_captcha()
-        sb.sleep(1)
+    driver = Driver(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP"))
+    try:
+        # Otevření URL
+        driver.uc_open_with_reconnect(url, 10)
+        driver.uc_gui_click_captcha()
+        time.sleep(1)
 
         # Načtení cookies a local storage
-        load_cookies(sb)
-        load_local_storage(sb)
-        sb.refresh()
-        sb.sleep(2)
+        load_cookies(driver)
+        load_local_storage(driver)
+        driver.refresh()
+        time.sleep(2)
 
         # Kliknutí na tlačítko otevřít
-        sb.find_element(By.CLASS_NAME, "button--open").click()
-        sb.sleep(5)
+        driver.find_element(By.CLASS_NAME, "button--open").click()
+        time.sleep(5)
 
         # Kliknutí na checkbox pro potvrzení
         # https://seleniumbase.io/examples/cdp_mode/ReadMe/#cdp-mode-usage
-        sb.cdp.gui_click_element("#Recaptcha div")
-        sb.sleep(5)
-    
+        driver.cdp.gui_click_element("#Recaptcha div")
+        time.sleep(5)
+
         # Screenshot
-        screenshotBytes = sb.find_element(By.CLASS_NAME, "section_tapes").screenshot_as_png
+        screenshotBytes = driver.find_element(By.CLASS_NAME, "section_tapes").screenshot_as_png
         screenshot_queue.put((int(os.getenv("TELEGRAM_USER_ID")), screenshotBytes, f"'{url.replace('https://csgo-skins.com/case/', '')}' opened"))
         logging.info(f"Screenshot of '{url.replace('https://csgo-skins.com/case/', '')}' opened added to queue")
 
         # Uložení session před ukončením
-        sb.sleep(3)
-        save_cookies(sb)
-        save_local_storage(sb)
+        time.sleep(3)
+        save_cookies(driver)
+        save_local_storage(driver)
+    except Exception as e:
+        logging.error(f"Error opening case: {e}")
+    finally:
+        driver.quit()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
@@ -380,29 +371,29 @@ def format_countdown_time(time_dict: dict) -> datetime:
 
 def get_case_open_times(urls: List[str]) -> List[CaseOpenTime]:
     """Zjistí kdy bude možné otevřít další case"""
-    """Zjistí kdy bude možné otevřít další case"""
     results = []
     firstUrl = True
-    with SB(uc=True) as sb:
+    driver = Driver(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP"))
+    try:
         for url in urls:
             # Otevření URL
             if firstUrl:
                 firstUrl = False
-                sb.activate_cdp_mode(url)
-                sb.uc_gui_click_captcha()
-                sb.sleep(1)
+                driver.uc_open_with_reconnect(url, 10)
+                driver.uc_gui_click_captcha()
+                time.sleep(1)
             else:
-                sb.open(url)
+                driver.open(url)
 
             # Načtení cookies a local storage
-            load_cookies(sb)
-            load_local_storage(sb)
-            sb.refresh()
-            sb.sleep(2)
+            load_cookies(driver)
+            load_local_storage(driver)
+            driver.refresh()
+            time.sleep(2)
 
             # Zjištění času do otevření case
-            countdown_data = extract_countdown_from_element(sb, ".Countdown")
-            
+            countdown_data = extract_countdown_from_element(driver, ".Countdown")
+
             if countdown_data:
                 end_time = format_countdown_time(countdown_data)
                 logging.info(f"{url.replace('https://csgo-skins.com/case/', '')} can be opened at {end_time}")
@@ -416,7 +407,11 @@ def get_case_open_times(urls: List[str]) -> List[CaseOpenTime]:
                     'url': url,
                     'end_time': None
                 })
-            sb.sleep(1)
+            time.sleep(1)
+    except Exception as e:
+        logging.error(f"Error while getting case open times: {e}")
+    finally:
+        driver.quit()
     return results
 
 def main():

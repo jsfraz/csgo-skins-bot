@@ -23,6 +23,7 @@ sudo docker compose up -d --build
 
 - `TELEGRAM_TOKEN` - Token pro přístup k Telegram Bot API
 - `TELEGRAM_USER_ID` - ID uživatele, kterému bude bot posílat zprávy
+- `PROXY_HOST_IP` - IP adresa proxy serveru
 
 #### Vytvoření bota
 
