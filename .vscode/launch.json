@@ -2,10 +2,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "main.py",
+            "name": "Aktuální soubor",
             "type": "debugpy",
             "request": "launch",
-            "program": "main.py",
+            "program": "${file}",
             "console": "integratedTerminal"
         }
     ]

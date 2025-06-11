@@ -9,12 +9,11 @@ import logging
 import schedule
 import threading
 from io import BytesIO
-from telegram import Update
 from seleniumbase import SB
+from telegram import Update
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from seleniumbase import Driver
-from seleniumbase import undetected
 from datetime import datetime, timedelta
 from selenium.webdriver.common.by import By
 from typing import List, Optional, TypedDict
@@ -117,7 +116,7 @@ def loginSkins():
     url = "https://csgo-skins.com/"
     logging.info("Logging in to %s", url)
     
-    driver = Driver(uc=True, proxy="socks5://192.168.194.254:1080")
+    driver = Driver(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP"))
     try:
         driver.uc_open_with_reconnect(url, 10)
         driver.uc_gui_click_captcha()
@@ -162,6 +161,7 @@ def loginSkins():
         # Po úspěšném přihlášení uložit session
         save_cookies(driver)
         save_local_storage(driver)
+        time.sleep(1)
     finally:
         driver.quit()
 
@@ -169,41 +169,48 @@ def openCase(url: str):
     """Otevření case"""
     logging.info(f"Opening case at {url.replace('https://csgo-skins.com/case/', '')}")
 
-    driver = Driver(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP"))
+    '''
     try:
-        # Otevření URL
-        driver.uc_open_with_reconnect(url, 10)
-        driver.uc_gui_click_captcha()
-        time.sleep(1)
+        with SB(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP")) as sb:
+            # Otevření URL
+            sb.activate_cdp_mode(url)
+            sb.uc_gui_click_captcha()
+            sb.sleep(1)
 
-        # Načtení cookies a local storage
-        load_cookies(driver)
-        load_local_storage(driver)
-        driver.refresh()
-        time.sleep(2)
+            # Načtení cookies a local storage
+            load_cookies(sb)
+            load_local_storage(sb)
+            sb.refresh()
+            sb.sleep(2)
 
-        # Kliknutí na tlačítko otevřít
-        driver.find_element(By.CLASS_NAME, "button--open").click()
-        time.sleep(5)
+            # Kliknutí na tlačítko otevřít
+            sb.find_element(By.CLASS_NAME, "button--open").click()
+            sb.sleep(5)
 
-        # Kliknutí na checkbox pro potvrzení
-        # https://seleniumbase.io/examples/cdp_mode/ReadMe/#cdp-mode-usage
-        driver.cdp.gui_click_element("#Recaptcha div")
-        time.sleep(5)
+            # Kliknutí na checkbox pro potvrzení
+            # https://seleniumbase.io/examples/cdp_mode/ReadMe/#cdp-mode-usage
+            sb.cdp.gui_click_element("#Recaptcha div")
+            sb.sleep(5)
 
-        # Screenshot
-        screenshotBytes = driver.find_element(By.CLASS_NAME, "section_tapes").screenshot_as_png
-        screenshot_queue.put((int(os.getenv("TELEGRAM_USER_ID")), screenshotBytes, f"'{url.replace('https://csgo-skins.com/case/', '')}' opened"))
-        logging.info(f"Screenshot of '{url.replace('https://csgo-skins.com/case/', '')}' opened added to queue")
+            # Screenshot
+            screenshotBytes = sb.find_element(By.CLASS_NAME, "section_tapes").screenshot_as_png
+            screenshot_queue.put((int(os.getenv("TELEGRAM_USER_ID")), screenshotBytes, f"'{url.replace('https://csgo-skins.com/case/', '')}' opened"))
+            logging.info(f"Screenshot of '{url.replace('https://csgo-skins.com/case/', '')}' opened added to queue")
 
-        # Uložení session před ukončením
-        time.sleep(3)
-        save_cookies(driver)
-        save_local_storage(driver)
+            # Uložení session před ukončením
+            sb.sleep(3)
+            save_cookies(sb)
+            save_local_storage(sb)
+            sb.sleep(1)
     except Exception as e:
         logging.error(f"Error opening case: {e}")
-    finally:
-        driver.quit()
+    '''
+    with SB(uc=True, test=True) as sb:
+        url = "www.planetminecraft.com/account/sign_in/"
+        sb.activate_cdp_mode(url)
+        sb.sleep(2)
+        sb.cdp.gui_click_element("#turnstile-widget div")
+        sb.sleep(2)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
@@ -430,6 +437,7 @@ def main():
     # Čekání na inicializaci
     time.sleep(2)
 
+    '''
     # Přihlášení na csgo-skins.com pouze pokud nejsou k dispozici cookies a local storage
     if not is_logged_in():
         logging.info("Valid session not found, logging in")
@@ -440,6 +448,9 @@ def main():
     # Otevření case
     urls = ["https://csgo-skins.com/case/daily-case", "https://csgo-skins.com/case/cs2-case"]
     caseTimes = get_case_open_times(urls)
+    '''
+    caseTimes = [
+        {'url': '', 'end_time': None},]
 
     for case in caseTimes:
         # Nalezen čas
