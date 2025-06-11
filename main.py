@@ -9,16 +9,15 @@ import logging
 import schedule
 import threading
 from io import BytesIO
+from telegram import Update
 from seleniumbase import SB
 from bs4 import BeautifulSoup
 from seleniumbase import Driver
 from seleniumbase import undetected
-from telegram import ForceReply, Update
 from datetime import datetime, timedelta
 from selenium.webdriver.common.by import By
 from typing import List, Optional, TypedDict
-from selenium.webdriver.support import expected_conditions as EC
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 class CaseOpenTime(TypedDict):
     url: str
@@ -47,6 +46,9 @@ def getDriver(url: str, load_session=True) -> undetected.Chrome:
     """ Inicializace WebDriveru s persistentním úložištěm """
     logging.info("Initializing web driver")
     driver = Driver(uc=True)
+
+    # Proxy
+    driver.options.add_argument("--proxy-server=socks5://" + os.environ["PROXY_IP_PORT"])
     
     # Nastavení trvalého profilu
     user_data_dir = os.path.join(os.getcwd(), "data/chrome_profile")
@@ -92,11 +94,21 @@ async def send_screenshot_to_user(user_id: int, image: bytes, caption: str):
     except Exception as e:
         logging.error(f"Error sending screenshot: {e}")
 
+async def send_telegram_message(user_id: int, message: str):
+    """Odešle textovou zprávu konkrétnímu uživateli"""
+    try:
+        await telegram.bot.send_message(chat_id=user_id, text=message)
+        logging.info(f"Message sent: {message}")
+    except Exception as e:
+        logging.error(f"Error sending message: {e}")
+
 # Globální proměnná pro event loop
 telegram_loop = None
 
 # Globální queue
 screenshot_queue = queue.Queue()
+# Globální queue pro zprávy
+message_queue = queue.Queue()
 
 async def process_screenshots():
     """Zpracování screenshotů z queue"""
@@ -110,10 +122,23 @@ async def process_screenshots():
         except Exception as e:
             logging.error(f"Error processing screenshot: {e}")
 
+async def process_messages():
+    """Zpracování zpráv z queue"""
+    while True:
+        try:
+            if not message_queue.empty():
+                user_id, message = message_queue.get()
+                await send_telegram_message(user_id, message)
+                message_queue.task_done()
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            logging.error(f"Error processing message: {e}")
+
 def loginSkins():
     """Přihlášení na csgo-skins.com """
     url = "https://csgo-skins.com/"
     logging.info("Logging in to %s", url)
+    
     driver = getDriver(url, load_session=False)
 
     # Přihlášení
@@ -146,6 +171,9 @@ def loginSkins():
     
     # Přihlašovací tlačítko
     driver.find_element(By.ID, "imageLogin").click()
+    
+    # Odeslání zprávy o úspěšném přihlášení
+    message_queue.put((int(os.getenv("TELEGRAM_USER_ID")), "User logged in successfully"))
     logging.info("User logged in")
     time.sleep(5)
     
@@ -159,7 +187,7 @@ def openCase(url: str):
     """Otevření case"""
     logging.info(f"Opening case at {url.replace('https://csgo-skins.com/case/', '')}")
 
-    with SB(uc=True) as sb:
+    with SB(uc=True, proxy="socks5://" + os.environ["PROXY_IP_PORT"]) as sb:
         sb.activate_cdp_mode(url)
         sb.uc_gui_click_captcha()
         sb.sleep(1)
@@ -199,8 +227,9 @@ async def run_telegram_bot_async():
     telegram = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
     telegram.add_handler(CommandHandler("help", help_command))
     
-    # Spuštění procesoru screenshotů
+    # Spuštění procesoru screenshotů a zpráv
     asyncio.create_task(process_screenshots())
+    asyncio.create_task(process_messages())
     
     async with telegram:
         await telegram.start()
@@ -216,9 +245,9 @@ def save_cookies(driver, filename="data/cookies.pkl"):
         cookies = driver.get_cookies()
         with open(filename, 'wb') as file:
             pickle.dump(cookies, file)
-        logging.info(f"Cookies uloženy do {filename}")
+        logging.info(f"Cookies saved to {filename}")
     except Exception as e:
-        logging.error(f"Chyba při ukládání cookies: {e}")
+        logging.error(f"Error saving cookies: {e}")
 
 def load_cookies(driver, filename="data/cookies.pkl"):
     """Načtení cookies ze souboru"""
@@ -228,10 +257,10 @@ def load_cookies(driver, filename="data/cookies.pkl"):
                 cookies = pickle.load(file)
             for cookie in cookies:
                 driver.add_cookie(cookie)
-            logging.info(f"Cookies načteny z {filename}")
+            logging.info(f"Cookies loaded from {filename}")
             return True
     except Exception as e:
-        logging.error(f"Chyba při načítání cookies: {e}")
+        logging.error(f"Error loading cookies: {e}")
     return False
 
 def save_local_storage(driver, filename="data/localstorage.json"):
@@ -240,9 +269,9 @@ def save_local_storage(driver, filename="data/localstorage.json"):
         local_storage = driver.execute_script("return window.localStorage;")
         with open(filename, 'w') as file:
             json.dump(local_storage, file)
-        logging.info(f"Local storage uložen do {filename}")
+        logging.info(f"Local storage saved to {filename}")
     except Exception as e:
-        logging.error(f"Chyba při ukládání local storage: {e}")
+        logging.error(f"Error saving local storage: {e}")
 
 def load_local_storage(driver, filename="data/localstorage.json"):
     """Načtení local storage"""
@@ -252,10 +281,10 @@ def load_local_storage(driver, filename="data/localstorage.json"):
                 local_storage = json.load(file)
             for key, value in local_storage.items():
                 driver.execute_script(f"window.localStorage.setItem('{key}', '{value}');")
-            logging.info(f"Local storage načten z {filename}")
+            logging.info(f"Local storage loaded from {filename}")
             return True
     except Exception as e:
-        logging.error(f"Chyba při načítání local storage: {e}")
+        logging.error(f"Error loading local storage: {e}")
     return False
 
 def is_logged_in():
@@ -279,10 +308,10 @@ def is_logged_in():
             return has_cookies and has_localstorage
             
         except (pickle.PickleError, json.JSONDecodeError, EOFError) as e:
-            logging.warning(f"Chyba při čtení session souborů: {e}")
+            logging.warning(f"Error reading session files: {e}")
             return False
-    
-    logging.info("Session soubory neexistují")
+
+    logging.info("Session files do not exist")
     return False
 
 def extract_countdown_time(html_content: str) -> dict:
@@ -357,7 +386,7 @@ def get_case_open_times(urls: List[str]) -> List[CaseOpenTime]:
     """Zjistí kdy bude možné otevřít další case"""
     results = []
     firstUrl = True
-    with SB(uc=True) as sb:
+    with SB(uc=True, proxy="socks5://" + os.environ["PROXY_IP_PORT"]) as sb:
         for url in urls:
             # Otevření URL
             if firstUrl:
@@ -379,13 +408,13 @@ def get_case_open_times(urls: List[str]) -> List[CaseOpenTime]:
             
             if countdown_data:
                 end_time = format_countdown_time(countdown_data)
-                logging.info(f"Case at {url} can be opened at {end_time}")
+                logging.info(f"{url.replace('https://csgo-skins.com/case/', '')} can be opened at {end_time}")
                 results.append({
                     'url': url,
                     'end_time': end_time
                 })
             else:
-                logging.warning(f"Could not extract countdown for {url}")
+                logging.warning(f"Could not extract countdown for {url.replace('https://csgo-skins.com/case/', '')}")
                 results.append({
                     'url': url,
                     'end_time': None
@@ -411,10 +440,10 @@ def main():
 
     # Přihlášení na csgo-skins.com pouze pokud nejsou k dispozici cookies a local storage
     if not is_logged_in():
-        logging.info("Není nalezena platná session, spouštím přihlášení")
+        logging.info("Valid session not found, logging in")
         loginSkins()
     else:
-        logging.info("Nalezena existující session, přeskakuji přihlášení")
+        logging.info("Valid session found, skipping login")
     
     # Otevření case
     urls = ["https://csgo-skins.com/case/daily-case", "https://csgo-skins.com/case/cs2-case"]
