@@ -169,7 +169,6 @@ def openCase(url: str):
     """Otevření case"""
     logging.info(f"Opening case at {url.replace('https://csgo-skins.com/case/', '')}")
 
-    '''
     try:
         with SB(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP")) as sb:
             # Otevření URL
@@ -204,13 +203,6 @@ def openCase(url: str):
             sb.sleep(1)
     except Exception as e:
         logging.error(f"Error opening case: {e}")
-    '''
-    with SB(uc=True, test=True) as sb:
-        url = "www.planetminecraft.com/account/sign_in/"
-        sb.activate_cdp_mode(url)
-        sb.sleep(2)
-        sb.cdp.gui_click_element("#turnstile-widget div")
-        sb.sleep(2)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a message when the command /help is issued."""
@@ -437,7 +429,6 @@ def main():
     # Čekání na inicializaci
     time.sleep(2)
 
-    '''
     # Přihlášení na csgo-skins.com pouze pokud nejsou k dispozici cookies a local storage
     if not is_logged_in():
         logging.info("Valid session not found, logging in")
@@ -448,9 +439,6 @@ def main():
     # Otevření case
     urls = ["https://csgo-skins.com/case/daily-case", "https://csgo-skins.com/case/cs2-case"]
     caseTimes = get_case_open_times(urls)
-    '''
-    caseTimes = [
-        {'url': '', 'end_time': None},]
 
     for case in caseTimes:
         # Nalezen čas
