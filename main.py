@@ -116,7 +116,7 @@ def loginSkins():
     url = "https://csgo-skins.com/"
     logging.info("Logging in to %s", url)
     
-    driver = Driver(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP"))
+    driver = Driver(uc=True)
     try:
         driver.uc_open_with_reconnect(url, 10)
         driver.uc_gui_click_captcha()
@@ -170,7 +170,7 @@ def openCase(url: str):
     logging.info(f"Opening case at {url.replace('https://csgo-skins.com/case/', '')}")
 
     try:
-        with SB(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP")) as sb:
+        with SB(uc=True) as sb:
             # Otevření URL
             sb.activate_cdp_mode(url)
             sb.uc_gui_click_captcha()
@@ -372,7 +372,7 @@ def get_case_open_times(urls: List[str]) -> List[CaseOpenTime]:
     """Zjistí kdy bude možné otevřít další case"""
     results = []
     firstUrl = True
-    driver = Driver(uc=True, proxy="socks5://" + os.environ.get("PROXY_HOST_IP"))
+    driver = Driver(uc=True)
     try:
         for url in urls:
             # Otevření URL
